@@ -1220,3 +1220,242 @@ def experimental_validation(weights_list):
 
 이러한 가중치는 실험적 검증과 베이지안 최적화를 통해 결정되었으며, 문제의 특성에 따라 조정이 필요할 수 있습니다.
 '''
+
+'''
+
+
+
+
+
+
+선의 경계를 일관되게 검출하기 위한 여러 접근 방법을 소개해드리겠습니다:
+
+### 1. Edge-Focused Loss Function
+
+```python
+class EdgeConsistencyLoss(nn.Module):
+    def __init__(self, edge_width=3):
+        super(EdgeConsistencyLoss, self).__init__()
+        self.edge_width = edge_width
+        
+    def forward(self, pred, target):
+        # 예측과 타겟의 경계 추출
+        pred_edges = self.extract_edges(pred)
+        target_edges = self.extract_edges(target)
+        
+        # 거리 변환을 통한 허용 범위 생성
+        distance_map = self.create_distance_map(target_edges)
+        
+        # 경계 일관성 손실 계산
+        edge_loss = F.binary_cross_entropy_with_logits(
+            pred_edges,
+            target_edges,
+            weight=1.0 / (distance_map + 1e-6)
+        )
+        
+        return edge_loss
+    
+    def extract_edges(self, x):
+        kernel = torch.ones(1, 1, self.edge_width, self.edge_width).cuda()
+        dilated = F.conv2d(x, kernel, padding=self.edge_width//2)
+        eroded = -F.conv2d(-x, kernel, padding=self.edge_width//2)
+        edges = dilated - eroded
+        return edges
+    
+    def create_distance_map(self, edges):
+        dist_map = F.max_pool2d(-edges, kernel_size=3, stride=1, padding=1)
+        dist_map = F.max_pool2d(dist_map, kernel_size=3, stride=1, padding=1)
+        return dist_map
+```
+
+### 2. Center Line Detection
+
+```python
+class CenterLineDetection(nn.Module):
+    def __init__(self):
+        super(CenterLineDetection, self).__init__()
+        
+        # 중심선 검출을 위한 스켈레톤화 레이어
+        self.skeleton = SkeletonizationLayer()
+        
+        # 중심선 기반 세그멘테이션
+        self.seg_head = nn.Sequential(
+            nn.Conv2d(64, 32, 3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 1, 1)
+        )
+        
+    def forward(self, x, target=None):
+        # 중심선 추출
+        center_line = self.skeleton(x)
+        
+        # 중심선 기반 세그멘테이션
+        seg_mask = self.seg_head(center_line)
+        
+        if target is not None:
+            # 중심선 기반 손실 계산
+            center_loss = self.compute_center_loss(seg_mask, target)
+            return seg_mask, center_loss
+            
+        return seg_mask
+
+class SkeletonizationLayer(nn.Module):
+    def __init__(self):
+        super(SkeletonizationLayer, self).__init__()
+        
+    def forward(self, x):
+        # 중심선 추출 로직
+        thin = self.thinning(x)
+        return thin
+    
+    def thinning(self, x):
+        # Zhang-Suen thinning algorithm 구현
+        prev = x
+        while True:
+            y = self.thinning_iteration(prev, 0)
+            z = self.thinning_iteration(y, 1)
+            if torch.all(torch.eq(prev, z)):
+                return z
+            prev = z
+```
+
+### 3. Multi-Scale Edge Detection
+
+```python
+class MultiScaleEdgeDetection(nn.Module):
+    def __init__(self, in_channels, scales=[1, 2, 4]):
+        super(MultiScaleEdgeDetection, self).__init__()
+        self.scales = scales
+        
+        # 다중 스케일 경계 검출기
+        self.edge_detectors = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(in_channels, 32, 3, padding=s, dilation=s),
+                nn.BatchNorm2d(32),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(32, 1, 1)
+            ) for s in scales
+        ])
+        
+        # 경계 융합 레이어
+        self.fusion = nn.Conv2d(len(scales), 1, 1)
+        
+    def forward(self, x):
+        # 다중 스케일 경계 검출
+        edge_maps = [detector(x) for detector in self.edge_detectors]
+        
+        # 경계 맵 융합
+        edge_concat = torch.cat(edge_maps, dim=1)
+        fused_edges = self.fusion(edge_concat)
+        
+        return fused_edges
+```
+
+### 4. 데이터 증강 및 학습 전략
+
+```python
+class ConsistentEdgeTraining:
+    def __init__(self, model, criterion):
+        self.model = model
+        self.criterion = criterion
+        self.edge_detector = MultiScaleEdgeDetection(3)
+        
+    def train_step(self, images, masks):
+        # 데이터 증강
+        augmented = self.apply_augmentation(images, masks)
+        
+        # 경계 일관성을 위한 학습
+        pred_masks = self.model(augmented['image'])
+        
+        # 다중 손실 계산
+        seg_loss = self.criterion(pred_masks, augmented['mask'])
+        edge_loss = self.compute_edge_loss(pred_masks, augmented['mask'])
+        
+        total_loss = seg_loss + 0.5 * edge_loss
+        return total_loss
+    
+    def apply_augmentation(self, images, masks):
+        transform = A.Compose([
+            A.ShiftScaleRotate(
+                shift_limit=0.0625,
+                scale_limit=0.1,
+                rotate_limit=45,
+                border_mode=cv2.BORDER_CONSTANT,
+                value=0
+            ),
+            A.OneOf([
+                A.ElasticTransform(
+                    alpha=120,
+                    sigma=120 * 0.05,
+                    alpha_affine=120 * 0.03
+                ),
+                A.GridDistortion(),
+                A.OpticalDistortion(),
+            ], p=0.3),
+        ])
+        
+        return transform(image=images, mask=masks)
+```
+
+### 5. 후처리 기법
+
+```python
+class EdgeRefinement:
+    def __init__(self, threshold=0.5, kernel_size=3):
+        self.threshold = threshold
+        self.kernel_size = kernel_size
+        
+    def refine_edges(self, pred_mask):
+        # 경계 추출
+        edges = self.extract_edges(pred_mask)
+        
+        # 세선화
+        thin_edges = self.skeletonize(edges)
+        
+        # 경계 복원
+        refined_mask = self.reconstruct_mask(thin_edges)
+        
+        return refined_mask
+    
+    def extract_edges(self, mask):
+        kernel = np.ones((self.kernel_size, self.kernel_size), np.uint8)
+        dilated = cv2.dilate(mask, kernel)
+        eroded = cv2.erode(mask, kernel)
+        edges = dilated - eroded
+        return edges
+    
+    def skeletonize(self, edges):
+        return skimage.morphology.skeletonize(edges > self.threshold)
+    
+    def reconstruct_mask(self, thin_edges):
+        # 세선화된 경계로부터 마스크 복원
+        kernel = np.ones((self.kernel_size, self.kernel_size), np.uint8)
+        reconstructed = cv2.dilate(thin_edges.astype(np.uint8), kernel)
+        return reconstructed
+```
+
+### 주요 해결 방안:
+
+1. **중심선 기반 접근:**
+   - 두꺼운 선을 중심선으로 변환
+   - 일관된 경계 위치 보장
+   - 스켈레톤화 알고리즘 활용
+
+2. **다중 스케일 검출:**
+   - 여러 스케일에서 경계 검출
+   - 경계의 일관성 향상
+   - 스케일 간 정보 융합
+
+3. **Edge-Focused Loss:**
+   - 경계 영역에 특화된 손실 함수
+   - 거리 변환 기반 가중치 부여
+   - 경계 일관성 강화
+
+4. **후처리:**
+   - 세선화 알고리즘 적용
+   - 모폴로지 연산을 통한 정제
+   - 일관된 경계 폭 유지
+
+이러한 방법들을 조합하여 사용하면 경계 검출의 일관성을 크게 향상시킬 수 있습니다.
+'''
