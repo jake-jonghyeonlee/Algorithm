@@ -1459,3 +1459,698 @@ class EdgeRefinement:
 
 이러한 방법들을 조합하여 사용하면 경계 검출의 일관성을 크게 향상시킬 수 있습니다.
 '''
+'''
+Grid Search를 이용한 하이퍼파라미터 최적화 코드를 작성해드리겠습니다.
+
+```python
+import itertools
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+import numpy as np
+from sklearn.metrics import jaccard_score  # IoU 계산용
+
+class GridSearch:
+    def __init__(self, model_class, train_dataset, val_dataset):
+        self.model_class = model_class
+        self.train_dataset = train_dataset
+        self.val_dataset = val_dataset
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # Grid Search를 위한 하이퍼파라미터 정의
+        self.param_grid = {
+            'learning_rate': [1e-4, 1e-3, 1e-2],
+            'batch_size': [8, 16, 32],
+            'optimizer': ['adam', 'sgd'],
+            'weight_decay': [1e-5, 1e-4, 1e-3],
+            'epochs': [50]
+        }
+        
+    def train_model(self, params):
+        # 데이터로더 설정
+        train_loader = DataLoader(
+            self.train_dataset, 
+            batch_size=params['batch_size'],
+            shuffle=True
+        )
+        val_loader = DataLoader(
+            self.val_dataset, 
+            batch_size=params['batch_size']
+        )
+        
+        # 모델 초기화
+        model = self.model_class().to(self.device)
+        
+        # Optimizer 설정
+        if params['optimizer'] == 'adam':
+            optimizer = torch.optim.Adam(
+                model.parameters(),
+                lr=params['learning_rate'],
+                weight_decay=params['weight_decay']
+            )
+        else:
+            optimizer = torch.optim.SGD(
+                model.parameters(),
+                lr=params['learning_rate'],
+                momentum=0.9,
+                weight_decay=params['weight_decay']
+            )
+        
+        # Loss 함수 설정
+        criterion = nn.BCEWithLogitsLoss()
+        
+        # 학습
+        best_iou = 0
+        for epoch in range(params['epochs']):
+            # 학습 모드
+            model.train()
+            for images, masks in train_loader:
+                images = images.to(self.device)
+                masks = masks.to(self.device)
+                
+                optimizer.zero_grad()
+                outputs = model(images)
+                loss = criterion(outputs, masks)
+                loss.backward()
+                optimizer.step()
+            
+            # 검증 모드
+            model.eval()
+            val_iou = self.evaluate(model, val_loader)
+            
+            if val_iou > best_iou:
+                best_iou = val_iou
+                
+        return best_iou
+    
+    def evaluate(self, model, dataloader):
+        total_iou = 0
+        n_samples = 0
+        
+        with torch.no_grad():
+            for images, masks in dataloader:
+                images = images.to(self.device)
+                masks = masks.to(self.device)
+                
+                outputs = model(images)
+                predicted = (torch.sigmoid(outputs) > 0.5).float()
+                
+                # IoU 계산
+                iou = jaccard_score(
+                    masks.cpu().numpy().flatten(),
+                    predicted.cpu().numpy().flatten(),
+                    average='binary'
+                )
+                
+                total_iou += iou * len(images)
+                n_samples += len(images)
+        
+        return total_iou / n_samples
+    
+    def run_grid_search(self):
+        # 모든 파라미터 조합 생성
+        param_combinations = [dict(zip(self.param_grid.keys(), v)) 
+                            for v in itertools.product(*self.param_grid.values())]
+        
+        best_params = None
+        best_score = 0
+        
+        # 각 파라미터 조합에 대해 학습 및 평가
+        for params in param_combinations:
+            print(f"\n시도하는 파라미터: {params}")
+            
+            score = self.train_model(params)
+            print(f"검증 IoU: {score:.4f}")
+            
+            if score > best_score:
+                best_score = score
+                best_params = params
+        
+        return best_params, best_score
+
+# 사용 예시
+if __name__ == "__main__":
+    # 데이터셋과 모델 클래스는 실제 구현에 맞게 수정 필요
+    grid_search = GridSearch(YourModelClass, train_dataset, val_dataset)
+    best_params, best_score = grid_search.run_grid_search()
+    
+    print("\n=== Grid Search 결과 ===")
+    print(f"최적 파라미터: {best_params}")
+    print(f"최고 IoU 점수: {best_score:.4f}")
+```
+
+이 코드의 주요 특징:
+
+1. **파라미터 그리드 정의**
+   - learning rate, batch size, optimizer 종류, weight decay 등 다양한 하이퍼파라미터 조합을 시도
+
+2. **평가 지표**
+   - IoU (Intersection over Union)를 사용하여 성능 평가
+   - 다른 메트릭으로 쉽게 변경 가능
+
+3. **모델 학습 및 평가**
+   - 각 파라미터 조합에 대해 모델을 처음부터 학습
+   - 검증 세트에서의 성능을 기록
+
+사용하실 때 주의할 점:
+
+1. `YourModelClass`를 실제 사용하는 모델 클래스로 교체해야 합니다.
+2. `train_dataset`과 `val_dataset`을 실제 데이터셋으로 교체해야 합니다.
+3. 필요에 따라 `param_grid`의 값들을 조정할 수 있습니다.
+4. 메모리 사용량과 실행 시간을 고려하여 파라미터 조합의 수를 적절히 조절해야 합니다.
+
+이 코드를 기반으로 필요에 따라 수정하여 사용하시면 됩니다.
+'''
+'''
+
+
+CUDA 메모리 에러를 해결하기 위한 여러 가지 방법을 알려드리겠습니다:
+
+### 1. 그래디언트 누적 (Gradient Accumulation)
+배치 사이즈를 직접 줄이는 대신, 여러 작은 배치의 그래디언트를 누적하여 큰 배치 효과를 낼 수 있습니다.
+
+```python
+class Trainer:
+    def __init__(self, accumulation_steps=4):  # 그래디언트 누적 횟수
+        self.accumulation_steps = accumulation_steps
+        
+    def train(self, model, train_loader, optimizer, criterion):
+        model.train()
+        optimizer.zero_grad()
+        
+        for idx, (images, masks) in enumerate(train_loader):
+            images = images.cuda()
+            masks = masks.cuda()
+            
+            # Forward pass
+            outputs = model(images)
+            loss = criterion(outputs, masks)
+            
+            # 손실을 accumulation_steps로 나누어 계산
+            loss = loss / self.accumulation_steps
+            loss.backward()
+            
+            # accumulation_steps마다 옵티마이저 스텝
+            if (idx + 1) % self.accumulation_steps == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+                
+            # 메모리 절약을 위해 캐시 비우기
+            del outputs, loss
+            torch.cuda.empty_cache()
+```
+
+### 2. 메모리 효율적인 데이터로더 설정
+
+```python
+train_loader = DataLoader(
+    dataset,
+    batch_size=batch_size,
+    shuffle=True,
+    num_workers=4,  # CPU 작업자 수
+    pin_memory=True,  # GPU 전송 최적화
+    persistent_workers=True  # 작업자 재사용
+)
+```
+
+### 3. 메모리 최적화를 위한 학습 루프
+
+```python
+def train_with_memory_optimization(model, train_loader, optimizer, criterion):
+    model.train()
+    
+    for images, masks in train_loader:
+        # GPU로 데이터 전송 전에 메모리 정리
+        torch.cuda.empty_cache()
+        
+        images = images.cuda(non_blocking=True)  # 비동기 전송
+        masks = masks.cuda(non_blocking=True)
+        
+        optimizer.zero_grad(set_to_none=True)  # 더 효율적인 그래디언트 초기화
+        
+        with torch.cuda.amp.autocast():  # 혼합 정밀도 학습
+            outputs = model(images)
+            loss = criterion(outputs, masks)
+        
+        loss.backward()
+        optimizer.step()
+        
+        # 수동으로 메모리 해제
+        del images, masks, outputs, loss
+        torch.cuda.empty_cache()
+```
+
+### 4. 혼합 정밀도 학습 (Mixed Precision Training)
+
+```python
+from torch.cuda.amp import autocast, GradScaler
+
+class AmpTrainer:
+    def __init__(self):
+        self.scaler = GradScaler()
+        
+    def train(self, model, train_loader, optimizer, criterion):
+        model.train()
+        
+        for images, masks in train_loader:
+            images = images.cuda()
+            masks = masks.cuda()
+            
+            optimizer.zero_grad()
+            
+            # 혼합 정밀도 사용
+            with autocast():
+                outputs = model(images)
+                loss = criterion(outputs, masks)
+            
+            # 스케일링된 역전파
+            self.scaler.scale(loss).backward()
+            self.scaler.step(optimizer)
+            self.scaler.update()
+```
+
+### 5. 메모리 모니터링 및 디버깅 도구
+
+```python
+def print_gpu_memory():
+    print(f"현재 할당된 메모리: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
+    print(f"최대 할당된 메모리: {torch.cuda.max_memory_allocated() / 1024**2:.2f} MB")
+    print(f"캐시된 메모리: {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
+
+# 메모리 누수 확인을 위한 데코레이터
+def memory_tracker(func):
+    def wrapper(*args, **kwargs):
+        print("함수 시작 전 메모리 상태:")
+        print_gpu_memory()
+        
+        result = func(*args, **kwargs)
+        
+        print("\n함수 종료 후 메모리 상태:")
+        print_gpu_memory()
+        return result
+    return wrapper
+```
+
+### 6. 모델 최적화
+
+```python
+# 모델의 메모리 사용량 줄이기
+def optimize_model_memory(model):
+    # 불필요한 그래디언트 계산 방지
+    for param in model.parameters():
+        if not param.requires_grad:
+            param.detach_()
+    
+    # 모델을 float16으로 변환 (선택적)
+    model.half()  
+    
+    # 모델 버퍼 최적화
+    model = torch.jit.script(model)  # TorchScript 사용
+    
+    return model
+```
+
+### 실제 적용 예시
+
+```python
+class MemoryEfficientTraining:
+    def __init__(self, model, batch_size, accumulation_steps=4):
+        self.model = optimize_model_memory(model).cuda()
+        self.scaler = GradScaler()
+        self.accumulation_steps = accumulation_steps
+        self.batch_size = batch_size
+        
+    @memory_tracker
+    def train_epoch(self, train_loader, optimizer, criterion):
+        self.model.train()
+        
+        for idx, (images, masks) in enumerate(train_loader):
+            images = images.cuda(non_blocking=True)
+            masks = masks.cuda(non_blocking=True)
+            
+            # 혼합 정밀도 + 그래디언트 누적
+            with autocast():
+                outputs = self.model(images)
+                loss = criterion(outputs, masks)
+                loss = loss / self.accumulation_steps
+            
+            self.scaler.scale(loss).backward()
+            
+            if (idx + 1) % self.accumulation_steps == 0:
+                self.scaler.step(optimizer)
+                self.scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+            
+            del images, masks, outputs, loss
+            torch.cuda.empty_cache()
+```
+
+이러한 방법들을 조합하여 사용하면 CUDA 메모리 에러를 효과적으로 해결할 수 있습니다. 특히:
+
+1. 그래디언트 누적을 통해 작은 배치 사이즈로 학습
+2. 혼합 정밀도 학습으로 메모리 사용량 감소
+3. 적절한 메모리 정리와 캐시 관리
+4. 효율적인 데이터 로딩
+
+이 방법들을 프로젝트의 요구사항에 맞게 선택적으로 적용하시면 됩니다.
+'''
+'''
+
+
+가장 쉽고 효율적인 방법은 **혼합 정밀도 학습(Mixed Precision Training)** 입니다. 구현이 간단하면서도 메모리 사용량을 크게 줄일 수 있습니다.
+
+```python
+from torch.cuda.amp import autocast, GradScaler
+
+def train_model(model, train_loader, criterion, optimizer, num_epochs):
+    # 스케일러 초기화
+    scaler = GradScaler()
+    
+    for epoch in range(num_epochs):
+        model.train()
+        for images, masks in train_loader:
+            images = images.cuda()
+            masks = masks.cuda()
+            
+            # optimizer 초기화
+            optimizer.zero_grad()
+            
+            # 혼합 정밀도 학습 적용
+            with autocast():
+                outputs = model(images)
+                loss = criterion(outputs, masks)
+            
+            # 역전파
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            
+            # 메모리 정리 (선택사항)
+            del outputs, loss
+            torch.cuda.empty_cache()
+
+# 사용 예시
+model = YourModel().cuda()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+criterion = nn.BCEWithLogitsLoss()
+
+train_model(model, train_loader, criterion, optimizer, num_epochs=50)
+```
+
+이 방법의 장점:
+1. 코드 수정이 최소화됨
+2. 메모리 사용량이 거의 절반으로 감소
+3. 학습 속도가 향상될 수 있음
+4. 정확도 손실이 거의 없음
+
+만약 이 방법으로도 부족하다면, 다음으로 배치 사이즈를 줄이는 것을 추천드립니다. 그래도 부족하다면 그래디언트 누적을 추가로 적용하시면 됩니다.
+'''
+'''
+
+
+혼합 정밀도 학습 다음으로는 **그래디언트 누적(Gradient Accumulation)**을 추천드립니다. 이 방법은 배치 사이즈를 직접 줄이는 것보다 더 효과적입니다.
+
+```python
+from torch.cuda.amp import autocast, GradScaler
+
+def train_model(model, train_loader, criterion, optimizer, num_epochs, accumulation_steps=4):
+    scaler = GradScaler()
+    
+    for epoch in range(num_epochs):
+        model.train()
+        optimizer.zero_grad()
+        
+        for idx, (images, masks) in enumerate(train_loader):
+            images = images.cuda()
+            masks = masks.cuda()
+            
+            # 혼합 정밀도 + 그래디언트 누적
+            with autocast():
+                outputs = model(images)
+                # loss를 accumulation_steps로 나누기
+                loss = criterion(outputs, masks) / accumulation_steps
+            
+            # 역전파
+            scaler.scale(loss).backward()
+            
+            # accumulation_steps만큼 그래디언트 누적 후 업데이트
+            if (idx + 1) % accumulation_steps == 0:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+            
+            # 메모리 정리
+            del outputs, loss
+            torch.cuda.empty_cache()
+            
+        print(f'Epoch [{epoch+1}/{num_epochs}]')
+
+# 사용 예시
+model = YourModel().cuda()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+criterion = nn.BCEWithLogitsLoss()
+
+# 원래 batch_size가 32였다면, 8로 줄이고 accumulation_steps=4로 설정하면
+# 실질적으로 batch_size=32 효과를 얻을 수 있습니다
+train_loader = DataLoader(dataset, batch_size=8, shuffle=True)
+train_model(
+    model, 
+    train_loader, 
+    criterion, 
+    optimizer, 
+    num_epochs=50, 
+    accumulation_steps=4
+)
+```
+
+이 방법의 장점:
+1. 메모리 사용량을 크게 줄일 수 있음
+2. 큰 배치 사이즈의 효과를 유지할 수 있음
+3. 학습 안정성 유지
+4. 혼합 정밀도 학습과 함께 사용 가능
+
+추가로 다음과 같은 설정도 도움이 될 수 있습니다:
+
+```python
+# DataLoader 최적화
+train_loader = DataLoader(
+    dataset,
+    batch_size=8,
+    shuffle=True,
+    num_workers=4,  # CPU 작업자 수 조절
+    pin_memory=True,  # GPU 전송 최적화
+)
+
+# 불필요한 그래디언트 계산 방지
+optimizer.zero_grad(set_to_none=True)  # True로 설정하면 메모리 사용량이 더 줄어듦
+```
+
+그래도 메모리 에러가 발생한다면:
+1. 배치 사이즈를 더 줄이기
+2. 모델의 크기 줄이기
+3. 입력 이미지 크기 줄이기
+4. 모델의 일부 레이어를 float16으로 변환
+
+이러한 방법들을 순차적으로 시도해보시기를 추천드립니다.
+'''
+'''
+
+
+`num_workers`는 직접적으로 CUDA 메모리와 관련이 있지는 않습니다. 하지만 데이터 로딩 과정에서 간접적인 영향을 미칠 수 있습니다.
+
+### num_workers의 역할
+
+1. **데이터 로딩 속도**
+   - CPU에서 데이터를 미리 로드하고 준비
+   - GPU가 데이터를 기다리는 시간 감소
+
+2. **메모리 관리**
+```python
+# 비효율적인 설정
+train_loader = DataLoader(
+    dataset,
+    batch_size=32,
+    num_workers=0  # 메인 프로세스에서 모든 작업 처리
+)
+
+# 효율적인 설정
+train_loader = DataLoader(
+    dataset,
+    batch_size=32,
+    num_workers=4,  # 여러 프로세스에서 분산 처리
+    pin_memory=True,  # GPU 전송을 위한 고정 메모리 사용
+    persistent_workers=True  # 작업자 재사용으로 오버헤드 감소
+)
+```
+
+### num_workers 설정 시 주의사항
+
+1. **너무 많은 workers는 역효과**
+   - CPU 메모리 사용량 증가
+   - 시스템 리소스 부하
+   - 일반적으로 CPU 코어 수의 2-4배 이하로 설정
+
+2. **최적의 worker 수 찾기**
+```python
+def find_optimal_workers(dataset, batch_size):
+    import time
+    
+    results = []
+    for num_workers in range(0, 9, 2):  # 0, 2, 4, 6, 8 테스트
+        loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=True
+        )
+        
+        start = time.time()
+        for _ in loader:
+            pass
+        end = time.time()
+        
+        results.append((num_workers, end-start))
+        print(f'Workers: {num_workers}, Time: {end-start:.2f}s')
+    
+    return results
+```
+
+### 결론
+
+- `num_workers`는 CUDA 메모리와 직접적인 관련은 없음
+- 하지만 데이터 로딩 최적화를 통해:
+  - 전체적인 학습 속도 향상
+  - 시스템 리소스의 효율적 사용
+  - 데이터 로딩 병목 현상 감소
+
+CUDA 메모리 문제를 해결하기 위해서는 앞서 설명드린 혼합 정밀도 학습이나 그래디언트 누적 같은 방법들이 더 직접적인 해결책이 됩니다.
+'''
+'''
+
+
+일반적으로 권장되는 배치 사이즈와 num_workers의 조합은 다음과 같습니다:
+
+### 일반적인 권장 조합
+
+```python
+# GPU 메모리 16GB 기준
+batch_size = 32
+num_workers = 4
+
+# GPU 메모리 8GB 기준
+batch_size = 16
+num_workers = 2~4
+
+# GPU 메모리 24GB 이상
+batch_size = 64
+num_workers = 4~8
+```
+
+### 경험적 법칙
+
+1. **num_workers 설정**
+   - CPU 코어 수의 2~4배 이하
+   - 일반적인 공식: `num_workers = 4 × (GPU 개수)`
+   ```python
+   num_workers = min(4 * torch.cuda.device_count(), cpu_count())
+   ```
+
+2. **배치 사이즈 설정**
+   - GPU 메모리의 약 80% 사용하는 크기
+   - RTX 3090 (24GB) → 32~64
+   - RTX 3080 (10GB) → 16~32
+   - RTX 2080 Ti (11GB) → 16~32
+
+### 실제 코드 예시
+
+```python
+import torch
+import multiprocessing as mp
+
+def get_optimal_settings():
+    gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB 단위
+    cpu_cores = mp.cpu_count()
+    
+    # GPU 메모리 기반 배치 사이즈 설정
+    if gpu_memory >= 20:  # 24GB 이상
+        batch_size = 64
+    elif gpu_memory >= 10:  # 11GB 이상
+        batch_size = 32
+    else:  # 8GB 이하
+        batch_size = 16
+    
+    # num_workers 설정
+    num_workers = min(4 * torch.cuda.device_count(), cpu_cores)
+    
+    return batch_size, num_workers
+
+# 데이터로더 설정
+batch_size, num_workers = get_optimal_settings()
+train_loader = DataLoader(
+    dataset,
+    batch_size=batch_size,
+    num_workers=num_workers,
+    pin_memory=True,
+    persistent_workers=True
+)
+```
+
+### 성능 테스트 코드
+
+```python
+def test_batch_worker_combinations(dataset):
+    batch_sizes = [8, 16, 32, 64]
+    worker_nums = [2, 4, 8]
+    results = []
+    
+    for batch_size in batch_sizes:
+        for workers in worker_nums:
+            try:
+                loader = DataLoader(
+                    dataset,
+                    batch_size=batch_size,
+                    num_workers=workers,
+                    pin_memory=True
+                )
+                
+                start_time = time.time()
+                memory_start = torch.cuda.memory_allocated()
+                
+                # 간단한 테스트 학습
+                for i, (data, target) in enumerate(loader):
+                    if i > 10:  # 10 배치만 테스트
+                        break
+                    data = data.cuda()
+                    target = target.cuda()
+                    
+                memory_peak = torch.cuda.max_memory_allocated()
+                end_time = time.time()
+                
+                results.append({
+                    'batch_size': batch_size,
+                    'workers': workers,
+                    'time': end_time - start_time,
+                    'memory_used': (memory_peak - memory_start) / 1024**2
+                })
+                
+            except RuntimeError as e:
+                print(f"Error with batch_size={batch_size}, workers={workers}")
+                print(e)
+                
+    return results
+
+# 결과 출력
+def print_results(results):
+    for r in results:
+        print(f"Batch Size: {r['batch_size']}, Workers: {r['workers']}")
+        print(f"Time: {r['time']:.2f}s, Memory: {r['memory_used']:.2f}MB\n")
+```
+
+이러한 조합을 시작점으로 하고, 실제 데이터셋과 모델의 특성에 따라 조정하는 것이 좋습니다. 특히:
+
+1. 이미지 크기가 큰 경우 배치 사이즈 감소
+2. 복잡한 데이터 증강이 있는 경우 num_workers 증가
+3. 메모리 부족 시 배치 사이즈 감소 후 그래디언트 누적 사용
+
+실제 프로젝트에서는 위의 테스트 코드를 사용해 최적의 조합을 찾는 것을 추천드립니다.
+'''
