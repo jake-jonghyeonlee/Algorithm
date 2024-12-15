@@ -32,18 +32,12 @@ class FocalLoss(nn.Module):
         pred = pred.view(-1)
         target = target.view(-1)
         
-        # weight를 detach()를 사용하여 gradient 계산에서 제외
+        # Focal loss formula
+        pt = target * pred + (1 - target) * (1 - pred)
         w = self.alpha * target + (1 - self.alpha) * (1 - target)
-        w = w.detach()  # 여기에 detach() 추가
+        w = w * (1 - pt).pow(self.gamma)
         
-        # BCE Loss 계산
-        bce_loss = F.binary_cross_entropy(pred, target, w, reduction='none')
-        
-        # Focal Loss 계산
-        pt = torch.exp(-bce_loss)
-        focal_loss = ((1 - pt) ** self.gamma) * bce_loss
-        
-        return focal_loss.mean()
+        return F.binary_cross_entropy(pred, target, w, reduction='mean')
 
 class TverskyLoss(nn.Module):
     def __init__(self, alpha=0.3, beta=0.7, smooth=1.0):

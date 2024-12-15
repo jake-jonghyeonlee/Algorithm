@@ -26,7 +26,7 @@ class ToTensor:
         if mask is not None:
             if isinstance(mask, Image.Image):
                 mask = np.array(mask)
-            mask = torch.from_numpy(mask.copy()).float()  # .copy()를 사용하여 새로운 연속된 메모리 공간에 배열 생성
+            mask = torch.from_numpy(mask).float()
             
         return image, mask
 
@@ -142,8 +142,8 @@ def get_transforms(train=True, aug_params=None):
     if train:
         transforms = []
         
-        # 1024x1024 입력을 위한 RandomResizedCrop
-        transforms.append(RandomResizedCrop(1024, scale=(0.8, 1.0)))
+        # 기본 RandomResizedCrop은 항상 포함
+        transforms.append(RandomResizedCrop(256, scale=(0.8, 1.0)))
         
         # 각 augmentation의 적용 여부를 aug_params로 제어
         if aug_params:
@@ -163,11 +163,12 @@ def get_transforms(train=True, aug_params=None):
                     contrast_limit=aug_params.get('contrast_limit', 0.2)
                 ))
         
+        # 기본 Normalize와 ToTensor는 항상 포함
         transforms.extend([Normalize(), ToTensor()])
         return Compose(transforms)
     else:
         return Compose([
-            Resize(1024),  # 1024x1024로 수정
+            Resize(256),
             Normalize(),
             ToTensor(),
         ]) 

@@ -429,36 +429,34 @@ class DeepLabV3Plus(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        # 입력 크기 확인
-        assert x.shape[1] == 3, f"Expected 3 channels, got {x.shape[1]}"
-        assert x.shape[2] == 256 and x.shape[3] == 256, f"Expected 256x256 spatial dimensions, got {x.shape[2]}x{x.shape[3]}"
-        
         # Encoder
-        x = self.conv1(x)          # 128x128
+        x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.maxpool(x)        # 64x64
+        x = self.maxpool(x)
         
         # Save low-level features
         low_level_feat = x
         
         # Continue encoding
-        x = self.layer1(x)         # 64x64
-        x = self.layer2(x)         # 32x32
-        x = self.layer3(x)         # 16x16
-        x = self.layer4(x)         # 8x8
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
         
         # ASPP
-        x = self.aspp(x)           # 8x8
+        x = self.aspp(x)
         
         # Decoder
-        # Upsample ASPP features to match low-level features
-        x = F.interpolate(x, size=low_level_feat.shape[2:], mode='bilinear', align_corners=False)  # 64x64
-        
-        # Process and concatenate low-level features
+        # Process low-level features
         low_level_feat = self.low_level_conv(low_level_feat)
         low_level_feat = self.low_level_bn(low_level_feat)
         low_level_feat = self.relu(low_level_feat)
+        
+        # Upsample ASPP features
+        x = F.interpolate(x, size=low_level_feat.shape[2:], mode='bilinear', align_corners=False)
+        
+        # Concatenate with low-level features
         x = torch.cat([x, low_level_feat], dim=1)
         
         # Final convolutions
@@ -469,7 +467,7 @@ class DeepLabV3Plus(nn.Module):
         x = self.decoder_bn2(x)
         x = self.relu(x)
         
-        # Upsample to original size (256x256)
+        # Upsample to original size
         x = F.interpolate(x, scale_factor=4, mode='bilinear', align_corners=False)
         x = self.decoder_conv3(x)
         

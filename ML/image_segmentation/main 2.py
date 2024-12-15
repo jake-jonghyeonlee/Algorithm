@@ -10,26 +10,27 @@ from pathlib import Path
 from models import UNet, AttentionUNet, ResUNet, DenseUNet, SEUNet, DeepLabV3Plus
 from augmentation import get_transforms
 from loss_function import get_loss_function
-from dataset import CustomSegmentationDataset
+from dataset import PetSegmentationDataset
 
 def get_dataloaders(batch_size, train_transform, valid_transform):
     # 데이터셋 경로 설정
-    data_root = Path("data")  # 데이터 루트 디렉토리
+    data_root = Path("data/oxford-iiit-pet")
+    data_root.mkdir(parents=True, exist_ok=True)
     
     # 데이터셋 생성
-    train_dataset = CustomSegmentationDataset(
-        data_dir=str(data_root),
+    train_dataset = PetSegmentationDataset(
+        root=str(data_root),
         transform=train_transform,
         train=True
     )
     
-    valid_dataset = CustomSegmentationDataset(
-        data_dir=str(data_root),
+    valid_dataset = PetSegmentationDataset(
+        root=str(data_root),
         transform=valid_transform,
         train=False
     )
     
-    # 데이터 로더 생성 (batch size 감소, 메모리 고려)
+    # 데이터 로더 생성
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
@@ -71,7 +72,7 @@ def objective(trial):
     
     # Augmentation 하이퍼파라미터 설정
     aug_params = {
-        # ��� augmentation의 사용 여부
+        # 각 augmentation의 사용 여부
         'horizontal_flip': trial.suggest_categorical('horizontal_flip', [True, False]),
         'vertical_flip': trial.suggest_categorical('vertical_flip', [True, False]),
         'rotate': trial.suggest_categorical('rotate', [True, False]),
@@ -188,7 +189,7 @@ def main():
     best_params = study.best_params
     print("Best hyperparameters:", best_params)
     
-    # 최적의 파라미터로 transform 설정
+    # 최적의 파라미터로 transform 설���
     aug_params = {k: v for k, v in best_params.items() 
                  if k in ['horizontal_flip', 'vertical_flip', 'rotate', 
                          'brightness_contrast', 'horizontal_flip_p', 
@@ -242,26 +243,14 @@ def main():
         factor=best_params["scheduler_factor"]
     )
     
-    # 학습 결과 저장을 위한 딕셔너리
-    training_results = {
-        'model_type': best_params["model_type"],
-        'hyperparameters': best_params,
-        'model_state_dict': None,
-        'optimizer_state_dict': None,
-        'transform_params': aug_params,
-        'loss_params': loss_params,
-        'training_history': []
-    }
+    # 모델 저장 경로
+    save_path = Path("models")
+    save_path.mkdir(exist_ok=True)
     
     # 학습 실행
     num_epochs = 50
-    best_valid_loss = float('inf')
-    
     for epoch in range(num_epochs):
         model.train()
-        train_loss = 0
-        train_metrics = {'iou': 0, 'dice': 0}
-        
         for images, masks in train_loader:
             images, masks = images.to(device), masks.to(device)
             optimizer.zero_grad()
@@ -270,73 +259,10 @@ def main():
             loss.backward()
             optimizer.step()
             
-            train_loss += loss.item()
-            iou, dice = calculate_metrics(outputs, masks)
-            train_metrics['iou'] += iou
-            train_metrics['dice'] += dice
-        
-        # 검증
-        model.eval()
-        valid_loss = 0
-        valid_metrics = {'iou': 0, 'dice': 0}
-        
-        with torch.no_grad():
-            for images, masks in valid_loader:
-                images, masks = images.to(device), masks.to(device)
-                outputs = model(images)
-                loss = criterion(outputs, masks)
-                valid_loss += loss.item()
-                
-                iou, dice = calculate_metrics(outputs, masks)
-                valid_metrics['iou'] += iou
-                valid_metrics['dice'] += dice
-        
-        # 평균 계산
-        train_loss /= len(train_loader)
-        valid_loss /= len(valid_loader)
-        train_metrics = {k: v/len(train_loader) for k, v in train_metrics.items()}
-        valid_metrics = {k: v/len(valid_loader) for k, v in valid_metrics.items()}
-        
-        # 학습 이력 저장
-        epoch_results = {
-            'epoch': epoch + 1,
-            'train_loss': train_loss,
-            'valid_loss': valid_loss,
-            'train_metrics': train_metrics,
-            'valid_metrics': valid_metrics
-        }
-        training_results['training_history'].append(epoch_results)
-        
-        # Learning rate 조정
-        scheduler.step(valid_loss)
-        
-        # 최고 성능 모델 저장
-        if valid_loss < best_valid_loss:
-            best_valid_loss = valid_loss
-            training_results['model_state_dict'] = model.state_dict()
-            training_results['optimizer_state_dict'] = optimizer.state_dict()
-            
-            # 체크포인트 저장
-            save_path = Path("models")
-            save_path.mkdir(exist_ok=True)
-            torch.save(training_results, 
-                      save_path / f"best_model.pkl")
-        
-        # 학습 진행상황 출력
-        print(f"Epoch [{epoch+1}/{num_epochs}]")
-        print(f"Train Loss: {train_loss:.4f}, Valid Loss: {valid_loss:.4f}")
-        print(f"Train IoU: {train_metrics['iou']:.4f}, Valid IoU: {valid_metrics['iou']:.4f}")
-        print(f"Train Dice: {train_metrics['dice']:.4f}, Valid Dice: {valid_metrics['dice']:.4f}")
-
-def calculate_metrics(pred, target):
-    pred = (torch.sigmoid(pred) > 0.5).float()
-    intersection = (pred * target).sum()
-    union = (pred + target).sum() - intersection
-    
-    iou = (intersection + 1e-6) / (union + 1e-6)
-    dice = (2 * intersection + 1e-6) / (pred.sum() + target.sum() + 1e-6)
-    
-    return iou.item(), dice.item()
+        # 모델 저장
+        if (epoch + 1) % 10 == 0:
+            torch.save(model.state_dict(), 
+                      save_path / f"model_epoch_{epoch+1}.pth")
 
 if __name__ == "__main__":
     main()
@@ -409,7 +335,7 @@ def main():
     # 병렬 처리를 위한 설정
     study.optimize(objective, 
                   n_trials=10,  # trial 수 감소
-                  n_jobs=-1)    # 가능한 모든 CPU ���어 사용
+                  n_jobs=-1)    # 가능한 모든 CPU 코어 사용
 ```
 
 5. **조기 종료 설정**:
