@@ -3,6 +3,7 @@ from optimize import train_model
 import torch
 from evaluation import SegmentationMetrics
 import numpy as np
+from visualization import save_optimization_plots
 
 def objective(trial):
     # 하이퍼파라미터 정의
@@ -75,7 +76,15 @@ def run_optimization(n_trials=100):
     study = optuna.create_study(
         direction='maximize',
         sampler=optuna.samplers.TPESampler(),  # Tree-structured Parzen Estimators
+        # TPESampler: 베이지안 최적화 기반 샘플러
+        # - 이전 시도들의 결과를 바탕으로 다음 파라미터를 선택
+        # - 성능이 좋은 영역에 더 집중하여 탐색
+        # - 탐색(exploration)과 활용(exploitation)의 균형을 자동으로 조절
+        
         pruner=optuna.pruners.MedianPruner()
+        # MedianPruner: 중간값 기반 가지치기
+        # - 현재 trial의 중간 성능이 이전 trials의 중간값보다 낮으면 조기 종료
+        # - 학습 시간을 절약하고 비효율적인 파라미터 조합을 빠르게 제거
     )
     
     study.optimize(objective, n_trials=n_trials)
@@ -90,6 +99,9 @@ def run_optimization(n_trials=100):
     
     # 결과 저장
     study.trials_dataframe().to_csv('bayesian_optimization_results.csv')
+    
+    # 시각화 결과 저장
+    save_optimization_plots(study, 'bayesian_optimization_plots')
 
 if __name__ == "__main__":
     run_optimization() 

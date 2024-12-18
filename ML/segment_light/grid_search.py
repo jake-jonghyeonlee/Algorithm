@@ -3,6 +3,7 @@ from optimize import train_model
 import torch
 from evaluation import SegmentationMetrics
 import numpy as np
+from visualization import save_optimization_plots
 
 def objective(trial):
     # 기존 하이퍼파라미터 옵션
@@ -116,6 +117,9 @@ def run_optimization(n_trials=None):
     
     # 결과 저장
     study.trials_dataframe().to_csv('grid_search_results.csv')
+    
+    # 시각화 결과 저장
+    save_optimization_plots(study, 'grid_search_plots')
 
 if __name__ == "__main__":
     run_optimization() 

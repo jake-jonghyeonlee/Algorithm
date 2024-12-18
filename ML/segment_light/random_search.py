@@ -3,6 +3,7 @@ from optimize import train_model
 import torch
 from evaluation import SegmentationMetrics
 import numpy as np
+from visualization import save_optimization_plots
 
 def objective(trial):
     # 하이퍼파라미터 정의 (랜덤 서치용 범위)
@@ -71,8 +72,16 @@ def objective(trial):
 def run_optimization(n_trials=100):
     study = optuna.create_study(
         direction='maximize',
-        sampler=optuna.samplers.RandomSampler(),  # 랜덤 샘플링
+        sampler=optuna.samplers.RandomSampler(),  # 무작위 샘플러
+        # RandomSampler: 완전 무작위 탐색
+        # - 파라미터 공간에서 균일하게 무작위로 값을 선택
+        # - 간단하지만 때로는 효과적인 방법
+        # - 지역 최적해에 빠질 위험이 적음
+        
         pruner=optuna.pruners.MedianPruner()
+        # MedianPruner: 중간값 기반 가지치기
+        # - 현재 trial의 중간 성능이 이전 trials의 중간값보다 낮으면 조기 종료
+        # - 학습 시간을 절약하고 비효율적인 파라미터 조합을 빠르게 제거
     )
     
     study.optimize(objective, n_trials=n_trials)
@@ -87,6 +96,9 @@ def run_optimization(n_trials=100):
     
     # 결과 저장
     study.trials_dataframe().to_csv('random_search_results.csv')
+    
+    # 시각화 결과 저장
+    save_optimization_plots(study, 'random_search_plots')
 
 if __name__ == "__main__":
     run_optimization() 
