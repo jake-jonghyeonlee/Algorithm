@@ -97,3 +97,23 @@ onnx_inference = ONNXInference('your_model.onnx')
 input_data = torch.randn(1, input_channels, height, width)  # 실제 입력 데이터
 output = onnx_inference.inference(input_data)
 """
+
+'''
+import onnxruntime
+import numpy as np
+
+# ONNX 모델 로드
+onnx_model_path = 'your_model.onnx'
+ort_session = onnxruntime.InferenceSession(onnx_model_path)
+
+# 입력 데이터 준비 (예: 랜덤 데이터 또는 실제 테스트 데이터)
+input_data = np.random.randn(1, input_channels, height, width).astype(np.float32)  # 모델의 입력 형태에 맞게 조정
+
+# 추론 수행
+input_name = ort_session.get_inputs()[0].name
+ort_inputs = {input_name: input_data}
+ort_outputs = ort_session.run(None, ort_inputs)
+
+# 결과 확인
+print(ort_outputs[0])  # 모델의 예측 결과
+'''

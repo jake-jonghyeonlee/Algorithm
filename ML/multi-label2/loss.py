@@ -110,3 +110,47 @@ def get_loss_function(loss_type='dice', **kwargs):
         raise ValueError(f"Loss type '{loss_type}'가 지원되지 않습니다. 다음 중 선택하세요: {list(loss_functions.keys())}")
     
     return loss_functions[loss_type](**kwargs)
+
+
+import numpy as np
+import torch
+
+def calculate_iou(preds, targets, num_classes):
+    iou_list = []
+    preds = preds.argmax(dim=1)  # 예측된 클래스 인덱스
+    for cls in range(num_classes):
+        intersection = ((preds == cls) & (targets == cls)).sum().item()
+        union = ((preds == cls) | (targets == cls)).sum().item()
+        iou = intersection / (union + 1e-6)  # 1e-6은 0으로 나누는 것을 방지
+        iou_list.append(iou)
+    return np.mean(iou_list)
+
+def calculate_dice(preds, targets, num_classes):
+    dice_list = []
+    preds = preds.argmax(dim=1)  # 예측된 클래스 인덱스
+    for cls in range(num_classes):
+        intersection = ((preds == cls) & (targets == cls)).sum().item()
+        dice = (2 * intersection) / (preds[targets == cls].sum().item() + targets[targets == cls].sum().item() + 1e-6)
+        dice_list.append(dice)
+    return np.mean(dice_list)
+
+def evaluate_model(model, dataloader, num_classes, device):
+    model.eval()
+    total_iou = 0
+    total_dice = 0
+    total_samples = 0
+
+    with torch.no_grad():
+        for images, masks in dataloader:
+            images = images.to(device)
+            masks = masks.to(device)
+
+            outputs = model(images)
+            total_iou += calculate_iou(outputs, masks, num_classes)
+            total_dice += calculate_dice(outputs, masks, num_classes)
+            total_samples += 1
+
+    avg_iou = total_iou / total_samples
+    avg_dice = total_dice / total_samples
+    return avg_iou, avg_dice
+
