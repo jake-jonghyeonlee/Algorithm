@@ -202,3 +202,32 @@ if __name__ == "__main__":
     # 손실 계산
     loss = loss_fn(outputs, targets)
     print(f"Calculated Dice Loss: {loss.item()}")
+
+import torch
+import torch.optim as optim
+
+# 모델, 손실 함수, 옵티마이저 초기화
+model = ...  # 모델 정의
+criterion = MultiClassDiceLoss()  # 또는 MultiClassTverskyLoss()
+optimizer = optim.Adam(model.parameters(), lr=1e-4)
+
+# 학습 루프
+for epoch in range(num_epochs):
+    for images, targets in dataloader:
+        # 1. 모델의 출력 계산
+        outputs = model(images)
+
+        # 2. 손실 계산
+        loss = criterion(outputs, targets)
+
+        # 3. 기울기 초기화
+        optimizer.zero_grad()
+
+        # 4. 손실에 대한 기울기 계산
+        loss.backward()
+
+        # 5. 가중치 업데이트
+        optimizer.step()
+
+        # 6. 손실 값 출력
+        print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}")
